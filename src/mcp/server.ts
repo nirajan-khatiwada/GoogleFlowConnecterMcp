@@ -1,7 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { resolve } from "node:path";
+import { resolve, join, dirname } from "node:path";
+import { homedir } from "node:os";
+import { writeFileSync, mkdirSync } from "node:fs";
 import {
   BRIDGE_DEFAULT_PORT,
   BRIDGE_HOST,
@@ -15,6 +17,7 @@ import {
 import { startBridgeServer } from "../bridge/server.js";
 import { getExt, listJobs, getJob, waitForJob, updateJob } from "../bridge/state.js";
 import { logger } from "../utils/logger.js";
+import { extractFrame, stitchVideos, getVideoDuration } from "../utils/video.js";
 
 const CALL_BUDGET_MS = 45000;
 
@@ -106,6 +109,7 @@ export async function createMcpServer(): Promise<McpServer> {
       prompt: z.string().min(1).describe("The generation prompt (e.g. 'Cinematic drone shot of misty mountain peak at sunrise')"),
       mode: ModeSchema.default("flow-text-to-image").describe("Generation mode: flow-text-to-image, flow-image-to-image, flow-text-to-video, flow-frame-to-video, flow-ingredients-to-video, flow-video-to-video, flow-extend-video, flow-create-character"),
       image_paths: z.array(z.string()).default([]).describe("Direct image links (URLs) or local file paths of independent reference images (for image-to-image, frame-to-video, or ingredients)"),
+      chain_from_video: z.string().optional().describe("Local file path to the preceding video clip. Automatically extracts its exact final frame and anchors it as the starting frame to preserve strict spatial, character action, and environmental continuity across clip boundaries."),
       aspect_ratio: AspectRatioSchema.default("16:9").describe("Aspect ratio: 16:9, 9:16, 1:1, 4:3, 3:4"),
       duration: z.enum(["4", "6", "8", "10"]).optional().describe("Video duration in seconds (4, 6, 8, 10). Default 6 for video."),
       image_model: ImageModelSchema.optional().describe("Model: nano-banana-pro, nano-banana-2, nano-banana-2-lite (image); omni-flash, veo-3.1-lite, veo-3.1-fast, veo-3.1-quality (video)"),
@@ -120,6 +124,21 @@ export async function createMcpServer(): Promise<McpServer> {
     },
     async (args) => {
       await ensureBridgeAlive();
+
+      if (args.chain_from_video) {
+        try {
+          const finalFrame = await extractFrame(args.chain_from_video, { position: "last" });
+          args.image_paths = [finalFrame, ...args.image_paths];
+          if (args.mode === "flow-text-to-video") {
+            args.mode = "flow-frame-to-video";
+          }
+          logger.info("mcp", `Chained continuity from ${args.chain_from_video} -> Anchor frame: ${finalFrame}`);
+        } catch (chainErr: any) {
+          return {
+            content: [{ type: "text", text: `❌ Continuity chaining error: Could not extract anchor frame from "${args.chain_from_video}": ${chainErr.message}` }],
+          };
+        }
+      }
 
       let isConnected = false;
       try {
@@ -589,6 +608,241 @@ export async function createMcpServer(): Promise<McpServer> {
 
       return {
         content: [{ type: "text", text: lines.join("\n") }],
+      };
+    }
+  );
+
+  // Tool 9: flow_extract_frame
+  server.tool(
+    "flow_extract_frame",
+    "Extract a high-resolution PNG frame from a generated video clip to anchor physical, character, and environmental continuity in subsequent clips.",
+    {
+      video_path: z.string().describe("Path to the video file (.mp4)"),
+      position: z.enum(["last", "first", "timestamp"]).default("last").describe("Frame position: 'last' (default, perfect for chaining to next clip), 'first', or 'timestamp'"),
+      timestamp_sec: z.number().min(0).optional().describe("Timestamp in seconds if position is 'timestamp'"),
+      output_path: z.string().optional().describe("Custom output path for the PNG frame"),
+    },
+    async (args) => {
+      try {
+        const framePath = await extractFrame(args.video_path, {
+          position: args.position,
+          timestampSec: args.timestamp_sec,
+          outputPath: args.output_path,
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: `✅ Extracted ${args.position} frame successfully:\n• Frame Path: ${framePath}\n\nTip: Pass this frame into 'flow_generate' (image_paths: ["${framePath}"]) with mode 'flow-frame-to-video' to guarantee seamless continuity into your next scene.`,
+            },
+          ],
+        };
+      } catch (err: any) {
+        return {
+          content: [{ type: "text", text: `❌ Frame extraction error: ${err.message}` }],
+        };
+      }
+    }
+  );
+
+  // Tool 10: flow_stitch_video
+  server.tool(
+    "flow_stitch_video",
+    "Stitch multiple sequential video clips into a single continuous film with seamless cut or smooth cinematic crossfade transitions.",
+    {
+      clip_paths: z.array(z.string()).min(1).describe("List of video file paths (.mp4) in chronological story order"),
+      output_path: z.string().optional().describe("Destination path for the continuous master video (default: inside Downloads/flow/master_continuous.mp4)"),
+      transition: z.enum(["cut", "crossfade"]).default("cut").describe("Transition type: 'cut' (instant seamless frame-matched cut) or 'crossfade' (smooth cinematic fade blend)"),
+      crossfade_sec: z.number().min(0.1).max(2.0).default(0.5).describe("Duration of crossfade blend in seconds (if transition is 'crossfade')"),
+    },
+    async (args) => {
+      try {
+        const defaultOut = join(homedir(), "Downloads", "flow", `master_continuous_${Date.now()}.mp4`);
+        const out = args.output_path ? resolve(args.output_path) : defaultOut;
+        const resultPath = await stitchVideos(args.clip_paths, out, {
+          transition: args.transition,
+          crossfadeSec: args.crossfade_sec,
+        });
+        const duration = await getVideoDuration(resultPath);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `🎬 Continuous video assembled successfully!\n\n• Output File: ${resultPath}\n• Total Runtime: ${duration.toFixed(1)}s\n• Clips Stitched: ${args.clip_paths.length}\n• Transition: ${args.transition.toUpperCase()}\n\nClips:\n${args.clip_paths.map((c, i) => `  ${i + 1}. ${c}`).join("\n")}`,
+            },
+          ],
+        };
+      } catch (err: any) {
+        return {
+          content: [{ type: "text", text: `❌ Video stitching error: ${err.message}` }],
+        };
+      }
+    }
+  );
+
+  // Tool 11: flow_storyboard_plan
+  server.tool(
+    "flow_storyboard_plan",
+    "Establish and validate a complete multi-clip story, scene continuity, character roster, and transition plan before generation to prevent character disappearance, scene teleportation, and action breaks.",
+    {
+      title: z.string().describe("Title of the video story or sequence"),
+      logline: z.string().describe("1-2 sentence core narrative summary"),
+      world_bible: z.object({
+        setting: z.string().describe("Environment, architectural style, room layout, or landscape"),
+        time_period: z.string().describe("Era or time of day (e.g. 'Late afternoon twilight, 2040 cyberpunk metropolis')"),
+        visual_tone: z.string().describe("Cinematic aesthetic, color palette, camera lens feel"),
+        lighting_rules: z.string().describe("Strict lighting direction and quality that must remain identical across connected clips"),
+        invariants: z.array(z.string()).describe("Rules that must never be broken (e.g. 'Character B never leaves Screen-Right', 'Rain is constant', 'Character A holds the datapad with left hand')"),
+      }),
+      characters: z.array(
+        z.object({
+          name: z.string(),
+          role: z.string().describe("Narrative role, e.g. 'Lead Protagonist', 'Skeptical Engineer', 'Helpful Guide'"),
+          appearance: z.string().describe("Detailed visual locks: hair, face, body type, attire, distinctive props"),
+          spatial_anchor: z.string().optional().describe("Default screen position: Screen-left, Screen-right, Center"),
+          clothing_lock: z.string().optional().describe("Strict clothing description that must not drift between clips"),
+        })
+      ).min(1).describe("Main and supporting characters participating in the story"),
+      scenes: z.array(
+        z.object({
+          clip_number: z.number().int().min(1),
+          scene_title: z.string(),
+          duration: z.enum(["4", "6", "8", "10"]).default("6"),
+          environment: z.object({
+            location: z.string(),
+            lighting: z.string(),
+            weather_or_atmosphere: z.string().optional(),
+            key_objects: z.array(z.string()).default([]),
+          }),
+          characters_present: z.array(
+            z.object({
+              name: z.string(),
+              position: z.string().describe("Screen position: Screen-left, Screen-right, Center, Background"),
+              action: z.string().describe("Concrete ongoing action during this clip"),
+              gaze_or_expression: z.string().describe("Facial expression and direction of gaze"),
+            })
+          ).min(1),
+          ongoing_events: z.string().describe("Core story beats occurring in this clip"),
+          camera_movement: z.string().describe("Concrete camera path and speed"),
+          continuity_handoff: z.object({
+            from_previous_clip: z.string().optional().describe("Action inertia and character pose carried over from the end of the previous clip"),
+            to_next_clip: z.string().optional().describe("Final frame vector: exact character poses, hand positions, and camera direction passed to the next clip"),
+          }),
+        })
+      ).min(1).describe("Chronological clip-by-clip scene beats"),
+      output_file: z.string().optional().describe("Optional path to save the storyboard JSON/Markdown plan"),
+    },
+    async (args) => {
+      const warnings: string[] = [];
+      const characterNames = new Set(args.characters.map((c) => c.name.toLowerCase()));
+
+      args.scenes.forEach((scene) => {
+        scene.characters_present.forEach((cp) => {
+          if (!characterNames.has(cp.name.toLowerCase())) {
+            warnings.push(`Clip ${scene.clip_number} references character "${cp.name}" who is not defined in the character roster.`);
+          }
+        });
+      });
+
+      for (let i = 0; i < args.scenes.length - 1; i++) {
+        const currentScene = args.scenes[i];
+        const nextScene = args.scenes[i + 1];
+        const currentChars = new Set(currentScene.characters_present.map((c) => c.name.toLowerCase()));
+        const nextChars = new Set(nextScene.characters_present.map((c) => c.name.toLowerCase()));
+
+        currentChars.forEach((cName) => {
+          if (!nextChars.has(cName)) {
+            const text = `${currentScene.ongoing_events} ${currentScene.continuity_handoff.to_next_clip ?? ""}`.toLowerCase();
+            if (!text.includes("exit") && !text.includes("leave") && !text.includes("walks away") && !text.includes("departs")) {
+              warnings.push(`⚠️ Continuity Warning: Character "${cName}" was in Clip ${currentScene.clip_number} but is absent in Clip ${nextScene.clip_number} without an explicit narrative exit.`);
+            }
+          }
+        });
+
+        if (!currentScene.continuity_handoff.to_next_clip && !nextScene.continuity_handoff.from_previous_clip) {
+          warnings.push(`⚠️ Transition Gap: Clip ${currentScene.clip_number} -> Clip ${nextScene.clip_number} has no explicit boundary frame/action handoff defined.`);
+        }
+      }
+
+      const generatedClipPlans = args.scenes.map((scene, idx) => {
+        const isFirst = idx === 0;
+        const prevClip = isFirst ? null : args.scenes[idx - 1];
+        const charsInScene = scene.characters_present.map((cp) => {
+          const charInfo = args.characters.find((c) => c.name.toLowerCase() === cp.name.toLowerCase());
+          return `• ${cp.name} (${charInfo?.role ?? "character"}): positioned at ${cp.position}. Appearance: ${charInfo?.appearance ?? "standard"}. Action: ${cp.action}. Expression/Gaze: ${cp.gaze_or_expression}.`;
+        }).join("\n  ");
+
+        const prompt = [
+          `[SCENE ${scene.clip_number}: ${scene.scene_title.toUpperCase()}]`,
+          `[ENVIRONMENT]: ${scene.environment.location}. Lighting: ${scene.environment.lighting}.${scene.environment.weather_or_atmosphere ? ` Atmosphere: ${scene.environment.weather_or_atmosphere}.` : ""}`,
+          `[CHARACTERS & SPATIAL POSITIONS]:\n  ${charsInScene}`,
+          scene.continuity_handoff.from_previous_clip
+            ? `[ACTION CONTINUATION FROM PREVIOUS FRAME]: Starting exactly from the boundary pose: ${scene.continuity_handoff.from_previous_clip}. Maintain momentum and physical inertia without resetting character positions.`
+            : "",
+          `[ONGOING BEATS & ACTION]: ${scene.ongoing_events}`,
+          `[CAMERA]: ${scene.camera_movement}`,
+          scene.continuity_handoff.to_next_clip
+            ? `[ENDING FRAME VECTOR]: Final second ends on: ${scene.continuity_handoff.to_next_clip}.`
+            : "",
+          `[NEGATIVE GUARDS]: Strictly NO character morphing, NO character disappearing, NO teleporting limbs, NO random gradient background, NO dialogue text overlays, NO speech bubbles.`,
+        ].filter(Boolean).join("\n");
+
+        return {
+          clipNumber: scene.clip_number,
+          title: scene.scene_title,
+          duration: scene.duration,
+          recommendedMode: isFirst ? "flow-text-to-video" : "flow-frame-to-video",
+          chainFromPrevious: isFirst ? null : `clip_${prevClip?.clip_number}.mp4`,
+          prompt,
+        };
+      });
+
+      const reportLines = [
+        `📋 STORYBOARD & CONTINUITY MASTER PLAN: ${args.title.toUpperCase()}`,
+        `============================================================`,
+        `Logline: ${args.logline}`,
+        `Setting: ${args.world_bible.setting} (${args.world_bible.time_period})`,
+        `Visual Tone: ${args.world_bible.visual_tone}`,
+        `Lighting Lock: ${args.world_bible.lighting_rules}`,
+        "",
+        `🎭 Character Roster (${args.characters.length}):`,
+        ...args.characters.map((c) => `• ${c.name} [${c.role}]: ${c.appearance} (Anchor: ${c.spatial_anchor ?? "Flexible"})`),
+        "",
+        `🔒 Static Invariants:`,
+        ...args.world_bible.invariants.map((inv) => `• ${inv}`),
+        "",
+        warnings.length > 0 ? `⚠️ Continuity Quality Audits (${warnings.length}):\n${warnings.map((w) => `  ${w}`).join("\n")}\n` : `✅ Continuity Quality Audit: Zero narrative gaps detected across clip boundaries.`,
+        `🎬 Generation Sequence (${generatedClipPlans.length} Clips):`,
+        ...generatedClipPlans.map((cp) => `
+------------------------------------------------------------
+🎞️ CLIP ${cp.clipNumber}: ${cp.title} (${cp.duration}s)
+Recommended Mode: ${cp.recommendedMode}
+${cp.chainFromPrevious ? `Continuity Chaining: Pass previous clip (${cp.chainFromPrevious}) into 'chain_from_video' parameter.` : "Starting Shot: Master scene establishing frame."}
+
+PROMPT FOR FLOW GENERATE:
+${cp.prompt}
+------------------------------------------------------------`),
+        "",
+        `💡 Next Step Execution Workflow:`,
+        `1. Generate Clip 1 with 'flow_generate'.`,
+        `2. For Clip 2, pass 'chain_from_video: "<clip1_path>"' to automatically extract the final frame and lock physical positions.`,
+        `3. For Clip 3, pass 'chain_from_video: "<clip2_path>"'.`,
+        `4. Finally, call 'flow_stitch_video' with all clip paths to produce the continuous master film!`,
+      ];
+
+      const fullReport = reportLines.join("\n");
+
+      if (args.output_file) {
+        try {
+          const absOut = resolve(args.output_file);
+          mkdirSync(dirname(absOut), { recursive: true });
+          writeFileSync(absOut, fullReport, "utf8");
+          logger.info("mcp", `Saved storyboard plan to ${absOut}`);
+        } catch {}
+      }
+
+      return {
+        content: [{ type: "text", text: fullReport }],
       };
     }
   );

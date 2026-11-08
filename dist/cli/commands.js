@@ -6,6 +6,7 @@ import { BRIDGE_DEFAULT_PORT, BRIDGE_HOST } from "../bridge/types.js";
 import { startBridgeServer } from "../bridge/server.js";
 import { runStdioServer } from "../mcp/server.js";
 import { logger } from "../utils/logger.js";
+import { extractFrame, stitchVideos, getVideoDuration } from "../utils/video.js";
 export function createCli() {
     const program = new Command("flow-mcp");
     program
@@ -103,6 +104,7 @@ export function createCli() {
         .description("Submit a prompt to Google Flow for image or video generation")
         .option("-m, --mode <mode>", "Generation mode", "flow-text-to-image")
         .option("-i, --image <paths...>", "Paths to input images")
+        .option("-c, --chain <videoPath>", "Chain from previous video clip (automatically extracts last frame as starting frame)")
         .option("-a, --aspect-ratio <ratio>", "Aspect ratio (16:9, 9:16, 1:1, 4:3, 3:4)", "16:9")
         .option("-d, --duration <seconds>", "Video duration (4, 6, 8, 10)", "6")
         .option("-o, --outputs <count>", "Outputs per prompt (1-4)", "1")
@@ -111,10 +113,21 @@ export function createCli() {
         .option("--new-project", "Create a fresh Flow project")
         .action(async (prompt, opts) => {
         try {
+            let imageList = (opts.image ?? []).map((p) => p.startsWith("http://") || p.startsWith("https://") ? p : path.resolve(p));
+            let mode = opts.mode;
+            if (opts.chain) {
+                console.log(`Extracting anchor frame from previous clip: ${opts.chain}...`);
+                const finalFrame = await extractFrame(opts.chain, { position: "last" });
+                imageList = [finalFrame, ...imageList];
+                if (mode === "flow-text-to-video") {
+                    mode = "flow-frame-to-video";
+                }
+                console.log(`Anchor frame extracted: ${finalFrame}`);
+            }
             const payload = {
                 job: {
                     prompt,
-                    mode: opts.mode,
+                    mode,
                     params: {
                         aspectRatio: opts.aspectRatio,
                         videoOption: `${opts.duration}s`,
@@ -125,7 +138,7 @@ export function createCli() {
                     },
                     inputImages: [],
                 },
-                imagePaths: (opts.image ?? []).map((p) => p.startsWith("http://") || p.startsWith("https://") ? p : path.resolve(p)),
+                imagePaths: imageList,
                 client: "cli",
                 maxRetries: Number(opts.maxRetries) || 3,
             };
@@ -159,6 +172,52 @@ export function createCli() {
         }
         catch (err) {
             console.error("Error submitting job:", err);
+        }
+    });
+    // Extract frame command
+    program
+        .command("extract-frame <video>")
+        .description("Extract a keyframe (last frame by default) from a video to maintain scene continuity")
+        .option("-p, --position <pos>", "Frame position: 'last', 'first', or 'timestamp'", "last")
+        .option("-t, --timestamp <sec>", "Timestamp in seconds if position is 'timestamp'")
+        .option("-o, --output <path>", "Destination PNG path")
+        .action(async (video, opts) => {
+        try {
+            const framePath = await extractFrame(video, {
+                position: opts.position,
+                timestampSec: opts.timestamp ? Number(opts.timestamp) : undefined,
+                outputPath: opts.output,
+            });
+            console.log(`✅ Extracted ${opts.position} frame: ${framePath}`);
+        }
+        catch (err) {
+            console.error("Frame extraction failed:", err.message);
+            process.exit(1);
+        }
+    });
+    // Stitch command
+    program
+        .command("stitch <clips...>")
+        .description("Stitch sequential video clips into a single continuous master video")
+        .option("-o, --output <path>", "Destination MP4 path (default: Downloads/flow/master_continuous.mp4)")
+        .option("-t, --transition <type>", "Transition type: 'cut' or 'crossfade'", "cut")
+        .option("--crossfade-sec <sec>", "Crossfade duration in seconds (default: 0.5)", "0.5")
+        .action(async (clips, opts) => {
+        try {
+            const defaultOut = path.join(os.homedir(), "Downloads", "flow", `master_continuous_${Date.now()}.mp4`);
+            const out = opts.output ? path.resolve(opts.output) : defaultOut;
+            console.log(`Stitching ${clips.length} clip(s) with ${opts.transition} transition...`);
+            const resultPath = await stitchVideos(clips, out, {
+                transition: opts.transition,
+                crossfadeSec: Number(opts.crossfadeSec) || 0.5,
+            });
+            const duration = await getVideoDuration(resultPath);
+            console.log(`\n🎬 Success! Continuous master video saved to:`);
+            console.log(`• ${resultPath} (${duration.toFixed(1)}s total runtime)\n`);
+        }
+        catch (err) {
+            console.error("Stitching failed:", err.message);
+            process.exit(1);
         }
     });
     // Stop command

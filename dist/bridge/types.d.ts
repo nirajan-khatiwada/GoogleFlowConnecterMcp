@@ -1616,4 +1616,334 @@ export interface ExtensionState {
     lastSeen: number;
     standbyAt: number;
 }
+export declare const CharacterDefSchema: z.ZodObject<{
+    name: z.ZodString;
+    role: z.ZodString;
+    appearance: z.ZodString;
+    spatialAnchor: z.ZodOptional<z.ZodString>;
+    clothingLock: z.ZodOptional<z.ZodString>;
+}, "strip", z.ZodTypeAny, {
+    name: string;
+    role: string;
+    appearance: string;
+    spatialAnchor?: string | undefined;
+    clothingLock?: string | undefined;
+}, {
+    name: string;
+    role: string;
+    appearance: string;
+    spatialAnchor?: string | undefined;
+    clothingLock?: string | undefined;
+}>;
+export type CharacterDef = z.infer<typeof CharacterDefSchema>;
+export declare const SceneBeatSchema: z.ZodObject<{
+    clipNumber: z.ZodNumber;
+    sceneTitle: z.ZodString;
+    duration: z.ZodDefault<z.ZodEnum<["4", "6", "8", "10"]>>;
+    environment: z.ZodObject<{
+        location: z.ZodString;
+        lighting: z.ZodString;
+        weatherOrAtmosphere: z.ZodOptional<z.ZodString>;
+        keyObjects: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+    }, "strip", z.ZodTypeAny, {
+        location: string;
+        lighting: string;
+        keyObjects: string[];
+        weatherOrAtmosphere?: string | undefined;
+    }, {
+        location: string;
+        lighting: string;
+        weatherOrAtmosphere?: string | undefined;
+        keyObjects?: string[] | undefined;
+    }>;
+    charactersPresent: z.ZodArray<z.ZodObject<{
+        name: z.ZodString;
+        position: z.ZodString;
+        action: z.ZodString;
+        gazeOrExpression: z.ZodString;
+    }, "strip", z.ZodTypeAny, {
+        name: string;
+        position: string;
+        action: string;
+        gazeOrExpression: string;
+    }, {
+        name: string;
+        position: string;
+        action: string;
+        gazeOrExpression: string;
+    }>, "many">;
+    ongoingEvents: z.ZodString;
+    cameraMovement: z.ZodString;
+    continuityHandoff: z.ZodObject<{
+        fromPreviousClip: z.ZodOptional<z.ZodString>;
+        toNextClip: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        fromPreviousClip?: string | undefined;
+        toNextClip?: string | undefined;
+    }, {
+        fromPreviousClip?: string | undefined;
+        toNextClip?: string | undefined;
+    }>;
+}, "strip", z.ZodTypeAny, {
+    clipNumber: number;
+    sceneTitle: string;
+    duration: "4" | "6" | "8" | "10";
+    environment: {
+        location: string;
+        lighting: string;
+        keyObjects: string[];
+        weatherOrAtmosphere?: string | undefined;
+    };
+    charactersPresent: {
+        name: string;
+        position: string;
+        action: string;
+        gazeOrExpression: string;
+    }[];
+    ongoingEvents: string;
+    cameraMovement: string;
+    continuityHandoff: {
+        fromPreviousClip?: string | undefined;
+        toNextClip?: string | undefined;
+    };
+}, {
+    clipNumber: number;
+    sceneTitle: string;
+    environment: {
+        location: string;
+        lighting: string;
+        weatherOrAtmosphere?: string | undefined;
+        keyObjects?: string[] | undefined;
+    };
+    charactersPresent: {
+        name: string;
+        position: string;
+        action: string;
+        gazeOrExpression: string;
+    }[];
+    ongoingEvents: string;
+    cameraMovement: string;
+    continuityHandoff: {
+        fromPreviousClip?: string | undefined;
+        toNextClip?: string | undefined;
+    };
+    duration?: "4" | "6" | "8" | "10" | undefined;
+}>;
+export type SceneBeat = z.infer<typeof SceneBeatSchema>;
+export declare const StoryboardPlanSchema: z.ZodObject<{
+    title: z.ZodString;
+    logline: z.ZodString;
+    worldBible: z.ZodObject<{
+        setting: z.ZodString;
+        timePeriod: z.ZodString;
+        visualTone: z.ZodString;
+        lightingRules: z.ZodString;
+        invariants: z.ZodArray<z.ZodString, "many">;
+    }, "strip", z.ZodTypeAny, {
+        setting: string;
+        timePeriod: string;
+        visualTone: string;
+        lightingRules: string;
+        invariants: string[];
+    }, {
+        setting: string;
+        timePeriod: string;
+        visualTone: string;
+        lightingRules: string;
+        invariants: string[];
+    }>;
+    characters: z.ZodArray<z.ZodObject<{
+        name: z.ZodString;
+        role: z.ZodString;
+        appearance: z.ZodString;
+        spatialAnchor: z.ZodOptional<z.ZodString>;
+        clothingLock: z.ZodOptional<z.ZodString>;
+    }, "strip", z.ZodTypeAny, {
+        name: string;
+        role: string;
+        appearance: string;
+        spatialAnchor?: string | undefined;
+        clothingLock?: string | undefined;
+    }, {
+        name: string;
+        role: string;
+        appearance: string;
+        spatialAnchor?: string | undefined;
+        clothingLock?: string | undefined;
+    }>, "many">;
+    scenes: z.ZodArray<z.ZodObject<{
+        clipNumber: z.ZodNumber;
+        sceneTitle: z.ZodString;
+        duration: z.ZodDefault<z.ZodEnum<["4", "6", "8", "10"]>>;
+        environment: z.ZodObject<{
+            location: z.ZodString;
+            lighting: z.ZodString;
+            weatherOrAtmosphere: z.ZodOptional<z.ZodString>;
+            keyObjects: z.ZodDefault<z.ZodArray<z.ZodString, "many">>;
+        }, "strip", z.ZodTypeAny, {
+            location: string;
+            lighting: string;
+            keyObjects: string[];
+            weatherOrAtmosphere?: string | undefined;
+        }, {
+            location: string;
+            lighting: string;
+            weatherOrAtmosphere?: string | undefined;
+            keyObjects?: string[] | undefined;
+        }>;
+        charactersPresent: z.ZodArray<z.ZodObject<{
+            name: z.ZodString;
+            position: z.ZodString;
+            action: z.ZodString;
+            gazeOrExpression: z.ZodString;
+        }, "strip", z.ZodTypeAny, {
+            name: string;
+            position: string;
+            action: string;
+            gazeOrExpression: string;
+        }, {
+            name: string;
+            position: string;
+            action: string;
+            gazeOrExpression: string;
+        }>, "many">;
+        ongoingEvents: z.ZodString;
+        cameraMovement: z.ZodString;
+        continuityHandoff: z.ZodObject<{
+            fromPreviousClip: z.ZodOptional<z.ZodString>;
+            toNextClip: z.ZodOptional<z.ZodString>;
+        }, "strip", z.ZodTypeAny, {
+            fromPreviousClip?: string | undefined;
+            toNextClip?: string | undefined;
+        }, {
+            fromPreviousClip?: string | undefined;
+            toNextClip?: string | undefined;
+        }>;
+    }, "strip", z.ZodTypeAny, {
+        clipNumber: number;
+        sceneTitle: string;
+        duration: "4" | "6" | "8" | "10";
+        environment: {
+            location: string;
+            lighting: string;
+            keyObjects: string[];
+            weatherOrAtmosphere?: string | undefined;
+        };
+        charactersPresent: {
+            name: string;
+            position: string;
+            action: string;
+            gazeOrExpression: string;
+        }[];
+        ongoingEvents: string;
+        cameraMovement: string;
+        continuityHandoff: {
+            fromPreviousClip?: string | undefined;
+            toNextClip?: string | undefined;
+        };
+    }, {
+        clipNumber: number;
+        sceneTitle: string;
+        environment: {
+            location: string;
+            lighting: string;
+            weatherOrAtmosphere?: string | undefined;
+            keyObjects?: string[] | undefined;
+        };
+        charactersPresent: {
+            name: string;
+            position: string;
+            action: string;
+            gazeOrExpression: string;
+        }[];
+        ongoingEvents: string;
+        cameraMovement: string;
+        continuityHandoff: {
+            fromPreviousClip?: string | undefined;
+            toNextClip?: string | undefined;
+        };
+        duration?: "4" | "6" | "8" | "10" | undefined;
+    }>, "many">;
+}, "strip", z.ZodTypeAny, {
+    title: string;
+    logline: string;
+    worldBible: {
+        setting: string;
+        timePeriod: string;
+        visualTone: string;
+        lightingRules: string;
+        invariants: string[];
+    };
+    characters: {
+        name: string;
+        role: string;
+        appearance: string;
+        spatialAnchor?: string | undefined;
+        clothingLock?: string | undefined;
+    }[];
+    scenes: {
+        clipNumber: number;
+        sceneTitle: string;
+        duration: "4" | "6" | "8" | "10";
+        environment: {
+            location: string;
+            lighting: string;
+            keyObjects: string[];
+            weatherOrAtmosphere?: string | undefined;
+        };
+        charactersPresent: {
+            name: string;
+            position: string;
+            action: string;
+            gazeOrExpression: string;
+        }[];
+        ongoingEvents: string;
+        cameraMovement: string;
+        continuityHandoff: {
+            fromPreviousClip?: string | undefined;
+            toNextClip?: string | undefined;
+        };
+    }[];
+}, {
+    title: string;
+    logline: string;
+    worldBible: {
+        setting: string;
+        timePeriod: string;
+        visualTone: string;
+        lightingRules: string;
+        invariants: string[];
+    };
+    characters: {
+        name: string;
+        role: string;
+        appearance: string;
+        spatialAnchor?: string | undefined;
+        clothingLock?: string | undefined;
+    }[];
+    scenes: {
+        clipNumber: number;
+        sceneTitle: string;
+        environment: {
+            location: string;
+            lighting: string;
+            weatherOrAtmosphere?: string | undefined;
+            keyObjects?: string[] | undefined;
+        };
+        charactersPresent: {
+            name: string;
+            position: string;
+            action: string;
+            gazeOrExpression: string;
+        }[];
+        ongoingEvents: string;
+        cameraMovement: string;
+        continuityHandoff: {
+            fromPreviousClip?: string | undefined;
+            toNextClip?: string | undefined;
+        };
+        duration?: "4" | "6" | "8" | "10" | undefined;
+    }[];
+}>;
+export type StoryboardPlan = z.infer<typeof StoryboardPlanSchema>;
 //# sourceMappingURL=types.d.ts.map

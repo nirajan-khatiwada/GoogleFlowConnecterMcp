@@ -370,3 +370,55 @@ export interface ExtensionState {
   lastSeen: number;
   standbyAt: number;
 }
+
+export const CharacterDefSchema = z.object({
+  name: z.string().min(1).describe("Name of the character"),
+  role: z.string().describe("Role in the story, e.g. 'Lead Protagonist', 'Skeptical Engineer'"),
+  appearance: z.string().describe("Visual anchor: hair, clothing, physique, facial features, accessories"),
+  spatialAnchor: z.string().optional().describe("Default spatial position, e.g. 'Screen-left', 'Screen-right', 'Center'"),
+  clothingLock: z.string().optional().describe("Strict clothing description that must not drift"),
+});
+export type CharacterDef = z.infer<typeof CharacterDefSchema>;
+
+export const SceneBeatSchema = z.object({
+  clipNumber: z.number().int().min(1),
+  sceneTitle: z.string(),
+  duration: z.enum(["4", "6", "8", "10"]).default("6"),
+  environment: z.object({
+    location: z.string().describe("Setting, architecture, room or landscape"),
+    lighting: z.string().describe("Lighting conditions, e.g. 'Golden hour sunset from screen-left', 'Dim neon ambient'"),
+    weatherOrAtmosphere: z.string().optional(),
+    keyObjects: z.array(z.string()).default([]),
+  }),
+  charactersPresent: z.array(
+    z.object({
+      name: z.string(),
+      position: z.string().describe("Screen position: Screen-left, Screen-right, Center, Background"),
+      action: z.string().describe("What the character is doing during this clip"),
+      gazeOrExpression: z.string().describe("Facial expression and direction of gaze"),
+    })
+  ).min(1),
+  ongoingEvents: z.string().describe("What is happening in the narrative"),
+  cameraMovement: z.string().describe("Camera path, e.g. 'Slow tracking shot left-to-right', 'Medium push-in'"),
+  continuityHandoff: z.object({
+    fromPreviousClip: z.string().optional().describe("Action inertia and character pose carried over from the end of the previous clip"),
+    toNextClip: z.string().optional().describe("Final frame vector: exact character poses, hand positions, and camera direction passed to the next clip"),
+  }),
+});
+export type SceneBeat = z.infer<typeof SceneBeatSchema>;
+
+export const StoryboardPlanSchema = z.object({
+  title: z.string().min(1),
+  logline: z.string(),
+  worldBible: z.object({
+    setting: z.string(),
+    timePeriod: z.string(),
+    visualTone: z.string(),
+    lightingRules: z.string(),
+    invariants: z.array(z.string()).describe("Rules that must never be broken across clips"),
+  }),
+  characters: z.array(CharacterDefSchema).min(1),
+  scenes: z.array(SceneBeatSchema).min(1),
+});
+export type StoryboardPlan = z.infer<typeof StoryboardPlanSchema>;
+
