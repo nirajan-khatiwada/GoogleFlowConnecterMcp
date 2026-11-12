@@ -70,10 +70,11 @@ flowchart TD
 #### 1. AI Agent Layer (MCP Client)
 - **Protocol**: Standard Model Context Protocol (MCP) over `stdio` using JSON-RPC 2.0.
 - **Client Support**: Fully compatible with Antigravity, Claude Desktop / Claude Code, Cursor, Windsurf, Codex, Gemini, and any other MCP-compliant host.
-- **Tools Provided**: `flow_generate`, `flow_status`, `flow_get_job`, `flow_list_jobs`, `flow_retry_job`, `flow_cancel_job`, `flow_stop`, and `flow_doctor`.
+- **Tools Provided**: `flow_generate`, `flow_storyboard_plan`, `flow_extract_frame`, `flow_stitch_video`, `flow_status`, `flow_get_job`, `flow_list_jobs`, `flow_retry_job`, `flow_cancel_job`, `flow_stop`, and `flow_doctor`.
 
-#### 2. Local Bridge Daemon & State Machine (`src/bridge/` & `src/mcp/`)
-- **MCP Server (`src/mcp/server.ts`)**: Exposes structured schemas (via Zod) for prompts, models, aspect ratios, durations, reference files, and project assets. Enforces model reference caps (e.g. up to 10 reference images for image-to-image; up to 7 for Omni Flash ingredients).
+#### 2. Local Bridge Daemon & State Machine (`src/bridge/`, `src/mcp/`, `src/utils/`)
+- **MCP Server (`src/mcp/server.ts`)**: Exposes structured schemas (via Zod) for prompts, models, aspect ratios, durations, reference files, continuity chaining, storyboard validation, and project assets. Enforces model reference caps (up to 10 reference images for `flow-image-to-image`; up to 7 for `omni-flash` ingredients; up to 3 for `veo-3.1-fast`/`lite` ingredients).
+- **Video Continuity Engine (`src/utils/video.ts`)**: Uses FFmpeg and FFprobe to extract exact keyframes (`last`, `first`, or `timestamp`), probe video runtimes, and stitch sequential clips into seamless `cut` or `crossfade` master videos.
 - **HTTP/WS Daemon (`src/bridge/server.ts`)**: Runs a persistent HTTP and WebSocket server on `127.0.0.1:8791`. Automatically started in-process by the MCP server or run standalone via `flow-mcp bridge`.
 - **State Store (`src/bridge/state.ts`)**: Persists job history and execution states to `~/.flow-mcp/jobs.json`. Reclaims orphaned jobs across server restarts and manages timeouts (45s per MCP call budget).
 - **Local File Server (`src/utils/files.ts`)**: When input reference images are supplied, registers them as ephemeral local tokens (`http://127.0.0.1:8791/files/:token/:filename`) with a 2-hour TTL, allowing the extension to upload local files directly into Google Flow without disk copying or cloud uploading.
@@ -116,11 +117,16 @@ flowchart TD
 
 ## 🚀 Step-by-Step Manual Installation
 
+### Prerequisites
+- **Node.js 20+** (`node --version`)
+- **FFmpeg & FFprobe** on system `PATH` (`ffmpeg -version`) — required for `chain_from_video`, `flow_extract_frame`, and `flow_stitch_video`
+- **Google Chrome** or **Microsoft Edge** logged in to [flow.google.com](https://flow.google.com)
+
 ### 1. Build and Link CLI
 ```bash
 # Clone the repository (if not already local)
 git clone https://github.com/nirajan-khatiwada/GoogleFlowConnecterMcp.git
-cd GoogleFlowConnecterMcp/flow-mcp
+cd GoogleFlowConnecterMcp
 
 # Install dependencies and compile TypeScript
 npm install
@@ -133,8 +139,7 @@ npm link
 ### 2. Browser Extension Setup
 1. Open your browser (`chrome://extensions` or `edge://extensions`).
 2. Toggle on **Developer mode** in the top right.
-3. Click **Load unpacked** and select the folder:
-   `flow-mcp/extension` (or full path `c:\Users\Nirajan\Downloads\video\flow-mcp\extension`).
+3. Click **Load unpacked** and select the `extension` folder at the root of the cloned repository (e.g., `<path-to-repo>/GoogleFlowConnecterMcp/extension`).
 4. Open [https://flow.google.com](https://flow.google.com) and log in with your Google account.
 5. Keep the Flow tab visible on your screen (side-by-side with your editor, not minimized).
 
@@ -151,30 +156,33 @@ Add to your user-level MCP configuration (`~/.cursor/mcp.json`, `~/.claude.json`
 }
 ```
 
-*(Note: If `flow-mcp` is not in your system PATH, you can point directly to the built file):*
+*(Note: If `flow-mcp` is not in your system PATH, you can point directly to the built file inside the cloned repository):*
 ```json
 {
   "mcpServers": {
     "flow-connector": {
       "command": "node",
-      "args": ["c:/Users/Nirajan/Downloads/video/flow-mcp/dist/index.js"]
+      "args": ["/path/to/GoogleFlowConnecterMcp/dist/index.js"]
     }
   }
 }
 ```
 
-### 4. Installing the Agent Skill Manually (Recommended)
+### 4. Installing the Agent Skill (Recommended)
 
-To make your AI agent significantly more effective at choosing the right model (`veo-3.1-quality` vs `nano-banana-pro`), camera movement prompts, aspect ratios, and reference image workflows, manually install the included `flow-generate` skill:
+To make your AI agent effective at choosing models (`veo-3.1-quality` vs `nano-banana-pro`), multi-clip continuity, camera movement prompts, aspect ratios, and reference image workflows, install the included `flow-generate` skill:
 
 #### For Claude Code:
-Create the destination folder and copy the skill file:
+Run the built-in CLI installer, or copy manually:
 ```bash
-# Windows (PowerShell)
+# Built-in CLI installer
+flow-mcp skill install
+
+# Or manually (Windows PowerShell)
 mkdir -Force "$env:USERPROFILE\.claude\skills\flow-generate"
 cp skills/flow-generate/SKILL.md "$env:USERPROFILE\.claude\skills\flow-generate\SKILL.md"
 
-# macOS / Linux (Bash)
+# Or manually (macOS / Linux Bash)
 mkdir -p ~/.claude/skills/flow-generate
 cp skills/flow-generate/SKILL.md ~/.claude/skills/flow-generate/SKILL.md
 ```
@@ -200,9 +208,9 @@ Copy or link `skills/flow-generate/SKILL.md` into your `.windsurfrules` or globa
 
 ## 🤖 One-Time Setup Prompt for AI Agents
 
-This setup needs to be done once per machine. If using an AI agent (Claude Code, Cursor, Antigravity, Windsurf, Codex), you can simply paste this exact prompt:
+This setup needs to be done once per machine. If using an AI agent (Claude Code, Cursor, Antigravity, Windsurf, Codex), you can paste this prompt:
 
-```text
+````text
 Set up Flow Connector on my machine so you can generate images and videos through my own logged-in Google Flow session (no API cost).
 
 This is safe to run even if it's already set up — check each step first and skip anything already done. Never force or reinstall something that's already working.
@@ -212,21 +220,17 @@ This is safe to run even if it's already set up — check each step first and sk
    - If it prints a version, it's installed — SKIP to step 5.
    - If the command is not found, carry on with step 2.
 
-2. Work out which machine this is, once, and use only that section from here on.
-     WINDOWS   PowerShell / cmd, paths like C:\Users\...
-     macOS     uname -s prints Darwin
-     LINUX     uname -s prints Linux
+2. Check prerequisites:
+   - Node.js 20 or newer: `node --version`
+   - FFmpeg (for multi-clip frame chaining and video stitching): `ffmpeg -version`
 
-3. Node.js 20 or newer. Run:
-     node --version
-
-4. Install/Link the Flow MCP CLI globally:
+3. Install/Link the Flow MCP CLI globally from the cloned repository folder:
      npm install
      npm run build
      npm link
    This makes `flow-mcp` globally executable across all terminals.
 
-5. Connect Flow MCP to Antigravity in your user-level MCP configuration (`~/.gemini/config/mcp_config.json`):
+4. Connect Flow MCP in your user-level MCP configuration (`~/.gemini/config/mcp_config.json`, `~/.claude.json`, `~/.cursor/mcp.json`):
 ```json
 {
   "mcpServers": {
@@ -237,17 +241,16 @@ This is safe to run even if it's already set up — check each step first and sk
 }
 ```
 
-6. Install companion skills into your Antigravity skills directory (`~/.gemini/config/skills/`):
-   - **`flow-generate`** (Bulk Image & Video Generation):  
-     `~/.gemini/config/skills/flow-generate/SKILL.md`
+5. Install companion skill `skills/flow-generate/SKILL.md` into your agent skills directory (e.g. `~/.gemini/config/skills/flow-generate/SKILL.md` or `~/.claude/skills/flow-generate/SKILL.md`).
 
-7. Check the connection:
+6. Check the connection:
 ```bash
 flow-mcp status
 ```
    - If extension is connected and flow tab is visible:
      "Connected! I can generate images and videos on Google Flow now — just ask."
    - If flow tab is HIDDEN: bring the Flow window to the front.
+````
 
 ---
 
@@ -327,74 +330,125 @@ call_mcp_tool({
   ToolName: "flow_storyboard_plan",
   Arguments: {
     title: "The Archive Discovery",
+    logline: "Historian Elena and archivist Marcus locate a sealed manuscript in a Victorian library.",
     world_bible: {
-      visual_style: "Cinematic realistic 1080p, warm golden hour tungsten lighting, subtle dust motes",
-      setting: "Victorian library archive with floor-to-ceiling mahogany shelves",
-      lighting: "Soft directional sunlight from high arched windows",
-      negative_constraints: "Strictly NO morphing limbs, no disappearing characters, no speech bubbles, no text"
+      setting: "Victorian library archive with floor-to-ceiling mahogany shelves and central oak table",
+      time_period: "Late afternoon golden hour",
+      visual_tone: "Cinematic realistic 1080p, subtle dust motes, warm tungsten and natural daylight",
+      lighting_rules: "Soft directional sunlight from high arched windows on screen-left",
+      invariants: [
+        "Elena wears charcoal wool blazer over ivory blouse and tortoiseshell glasses",
+        "Marcus wears brown tweed vest over light blue shirt and stays in frame unless explicitly exiting",
+        "Golden hour window light remains constant across all clips"
+      ]
     },
-    character_ledger: [
+    characters: [
       {
-        id: "elena",
-        name: "Elena (Historian)",
-        appearance: "Mid-30s woman, dark hair in low bun, charcoal wool blazer, glasses",
-        clothing_lock: "Charcoal wool blazer over ivory silk blouse, tortoiseshell glasses",
-        default_spatial_anchor: "screen-center",
-        relationship: "Lead investigator"
+        name: "Elena",
+        role: "Lead Historian",
+        appearance: "Mid-30s woman, dark hair in low bun, tortoiseshell glasses, charcoal wool blazer",
+        clothing_lock: "Charcoal wool blazer over ivory silk blouse",
+        spatial_anchor: "Center"
       },
       {
-        id: "marcus",
-        name: "Marcus (Archivist)",
-        appearance: "Elderly gentleman, silver beard, tweed vest, rolled sleeves",
-        clothing_lock: "Brown tweed vest over light blue collared shirt",
-        default_spatial_anchor: "screen-right",
-        relationship: "Archive custodian assisting Elena"
+        name: "Marcus",
+        role: "Senior Archivist",
+        appearance: "Elderly gentleman, silver beard, brown tweed vest over light blue collared shirt",
+        clothing_lock: "Brown tweed vest, rolled shirt sleeves",
+        spatial_anchor: "Screen-right"
       }
     ],
-    scene_beats: [
+    scenes: [
       {
-        beat_number: 1,
+        clip_number: 1,
+        scene_title: "Examining the Folio",
         duration: "6",
-        participating_characters: ["elena", "marcus"],
-        action_narrative: "Elena and Marcus stand together at a large oak table examining a leather-bound folio. Marcus points to an illuminated diagram while Elena listens intently.",
-        spatial_layout: "Elena at screen-center leaning forward; Marcus standing at screen-right pointing to folio.",
-        camera_direction: "Slow dolly push-in toward the table",
-        toNextClip: {
-          exitCharacterPose: "Elena straightens up and points toward a high shelf on screen-left.",
-          exitCameraState: "Medium two-shot locked on both characters.",
-          exitActionOngoing: "Elena is pointing toward the upper bookshelf."
+        environment: {
+          location: "Victorian library archive oak reading table",
+          lighting: "Warm golden hour window light from screen-left",
+          weather_or_atmosphere: "Quiet interior with floating dust motes",
+          key_objects: ["Large oak table", "Leather-bound folio", "Rolling library ladder"]
+        },
+        characters_present: [
+          {
+            name: "Elena",
+            position: "Center",
+            action: "Leans over folio then straightens up pointing toward high shelf on screen-left",
+            gaze_or_expression: "Focused curiosity shifting to realization"
+          },
+          {
+            name: "Marcus",
+            position: "Screen-right",
+            action: "Points at diagram in folio, then looks toward screen-left following Elena's gesture",
+            gaze_or_expression: "Attentive, scholarly concentration"
+          }
+        ],
+        ongoing_events: "Elena and Marcus inspect the folio together; Elena spots a clue referencing a high shelf.",
+        camera_movement: "Slow dolly push-in toward the oak table",
+        continuity_handoff: {
+          from_previous_clip: "Opening establishing shot",
+          to_next_clip: "Elena pointing toward upper bookshelf on screen-left; Marcus turning his head to follow her gaze."
         }
       },
       {
-        beat_number: 2,
+        clip_number: 2,
+        scene_title: "Approaching the Ladder",
         duration: "6",
-        participating_characters: ["elena", "marcus"],
-        fromPreviousClip: {
-          entryCharacterPose: "Elena begins clip pointing at upper shelf; Marcus turns his head to look in that direction.",
-          entryCameraState: "Medium two-shot matching previous final frame.",
-          incomingMomentum: "Elena lowers her hand and moves toward the rolling library ladder."
+        environment: {
+          location: "Victorian library archive between oak table and rolling ladder",
+          lighting: "Warm golden hour window light from screen-left",
+          key_objects: ["Oak table", "Rolling library ladder", "Red leather book on upper shelf"]
         },
-        action_narrative: "Elena walks toward the rolling ladder on screen-left, while Marcus remains at the oak table keeping watch over the documents.",
-        spatial_layout: "Elena moves to screen-left ladder; Marcus remains grounded at screen-right table looking up at Elena.",
-        camera_direction: "Pan slightly left following Elena while maintaining Marcus in frame.",
-        toNextClip: {
-          exitCharacterPose: "Elena climbs three steps up the rolling ladder, reaching her hand toward a red book.",
-          exitCameraState: "Low angle looking up at Elena on ladder with Marcus visible at bottom-right.",
-          exitActionOngoing: "Elena's hand is inches away from grasping the red spine."
+        characters_present: [
+          {
+            name: "Elena",
+            position: "Screen-left",
+            action: "Lowers pointing hand, walks to rolling ladder, climbs three steps reaching toward red book",
+            gaze_or_expression: "Determined, eyes fixed on upper shelf"
+          },
+          {
+            name: "Marcus",
+            position: "Screen-right",
+            action: "Remains grounded by the oak table looking up toward Elena on the ladder",
+            gaze_or_expression: "Watchful, supportive expression"
+          }
+        ],
+        ongoing_events: "Elena crosses to the rolling ladder and climbs while Marcus keeps watch over the folio.",
+        camera_movement: "Gentle pan left tracking Elena while keeping Marcus visible at screen-right",
+        continuity_handoff: {
+          from_previous_clip: "Elena pointing at upper bookshelf on screen-left; Marcus watching.",
+          to_next_clip: "Elena standing on third ladder rung, right hand inches from grasping the red book; Marcus watching from bottom-right."
         }
       },
       {
-        beat_number: 3,
+        clip_number: 3,
+        scene_title: "Retrieving the Manuscript",
         duration: "6",
-        participating_characters: ["elena", "marcus"],
-        fromPreviousClip: {
-          entryCharacterPose: "Elena on ladder reaching for red book; Marcus standing at base looking up.",
-          entryCameraState: "Low angle two-shot matching previous final frame.",
-          incomingMomentum: "Elena grasps the red book and pulls it from the shelf."
+        environment: {
+          location: "Victorian library archive by rolling ladder",
+          lighting: "Warm golden hour window light from screen-left",
+          key_objects: ["Rolling library ladder", "Red leather book"]
         },
-        action_narrative: "Elena pulls the red book from the shelf, inspects its seal, and smiles down at Marcus who nods approvingly from the floor.",
-        spatial_layout: "Elena elevated on ladder at screen-left; Marcus at ladder base on screen-right.",
-        camera_direction: "Gentle tilt up focusing on Elena holding the book."
+        characters_present: [
+          {
+            name: "Elena",
+            position: "Screen-left",
+            action: "Grasps and pulls red book from shelf, inspects its wax seal, smiles down at Marcus",
+            gaze_or_expression: "Triumphant smile glancing down toward Marcus"
+          },
+          {
+            name: "Marcus",
+            position: "Screen-right",
+            action: "Stands at floor level looking up at Elena and nods approvingly",
+            gaze_or_expression: "Warm, approving smile"
+          }
+        ],
+        ongoing_events: "Elena retrieves the sealed red book while Marcus confirms the find.",
+        camera_movement: "Gentle tilt up focusing on Elena holding the red book",
+        continuity_handoff: {
+          from_previous_clip: "Elena on third ladder rung reaching for red book; Marcus watching from bottom-right.",
+          to_next_clip: "Elena holds open red book at chest height smiling down at Marcus."
+        }
       }
     ]
   }
@@ -422,6 +476,7 @@ call_mcp_tool({
   ServerName: "flow-connector",
   ToolName: "flow_generate",
   Arguments: {
+    mode: "flow-frame-to-video",
     chain_from_video: "/downloads/flow/archive_discovery_clip1.mp4",
     prompt: "Continuous action from anchor frame. Elena (charcoal blazer) lowers pointing hand and walks toward rolling library ladder on screen-left. Marcus (tweed vest) stays at oak table on screen-right watching her. Elena ascends three steps. Both characters stay in scene. Matching warm lighting. NO MORPHING.",
     image_model: "veo-3.1-quality",
@@ -437,6 +492,7 @@ call_mcp_tool({
   ServerName: "flow-connector",
   ToolName: "flow_generate",
   Arguments: {
+    mode: "flow-frame-to-video",
     chain_from_video: "/downloads/flow/archive_discovery_clip2.mp4",
     prompt: "Continuous action from anchor frame. Elena on ladder reaches and pulls red book from shelf. Marcus stands below looking up and nods approvingly. Elena smiles, opening the book. Both characters visible throughout. NO MORPHING.",
     image_model: "veo-3.1-quality",
@@ -463,8 +519,6 @@ call_mcp_tool({
 });
 // Result: Seamless 18-second continuous narrative video!
 ```
-
----
 
 ---
 
@@ -592,18 +646,19 @@ Generates images or videos with Google Flow.
 | Argument | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | `prompt` | `string` | *(Required)* | Prompt describing the desired generation |
-| `mode` | `enum` | `flow-text-to-image` | `flow-text-to-image`, `flow-image-to-image`, `flow-text-to-video`, `flow-frame-to-video`, `flow-ingredients-to-video`, `flow-video-to-video`, `flow-extend-video`, `flow-create-character`, `flow-set-voice` |
-| `image_paths` | `string[]` | `[]` | Absolute file paths to reference images on disk |
+| `mode` | `enum` | `flow-text-to-image` | `flow-text-to-image`, `flow-image-to-image`, `flow-text-to-video`, `flow-frame-to-video`, `flow-ingredients-to-video`, `flow-video-to-video`, `flow-extend-video`, `flow-create-character`, `flow-set-voice`, `flow-rename-asset`, `flow-upload-assets` |
+| `image_paths` | `string[]` | `[]` | URLs or local file paths to reference images on disk |
+| `chain_from_video` | `string` | optional | Path to previous video clip. Automatically extracts final frame into `image_paths` (if `mode` is `flow-text-to-video`, switches it to `flow-frame-to-video`; pass `mode: "flow-frame-to-video"` when chaining) |
 | `aspect_ratio` | `enum` | `16:9` | `16:9`, `9:16`, `1:1`, `2:3`, `3:2`, `4:3`, `3:4` |
-| `duration` | `enum` | `6` | Video length: `4`, `6`, `8`, `10` seconds |
-| `image_model` | `enum` | auto | Images: `nano-banana-pro`, `nano-banana-2`, `nano-banana-2-lite`<br>Videos: `omni-flash`, `veo-3.1-lite`, `veo-3.1-fast`, `veo-3.1-quality` |
-| `outputs` | `number` | `1` | Variations per prompt (1 to 4) |
+| `duration` | `enum` | `6` | Video length per clip: `4`, `6`, `8`, `10` seconds |
+| `image_model` | `enum` | auto | Images: `nano-banana-pro`, `nano-banana-2`, `nano-banana-2-lite`<br>Videos: `omni-flash`, `veo-3.1-lite`, `veo-3.1-fast`, `veo-3.1-quality` (plus legacy aliases `quality`, `speed`) |
+| `outputs` | `number` | `1` | Variations per prompt (1 to 4 for Flow; schema max 12) |
 | `folder` | `string` | `flow` | Subfolder under your Downloads directory |
 | `new_project` | `boolean` | `false` | Start generation in a brand new Flow project |
 | `character_name` | `string` | optional | Name of character to create or reference |
 | `character_refs`| `string[]` | optional | Cast reusable project characters in this scene |
 | `asset_refs` | `string[]` | optional | Reuse existing project assets as ingredients |
-| `chain_from_video` | `string` | optional | Path to previous video clip. Automatically extracts final frame and switches mode to `flow-frame-to-video` for seamless boundary continuity |
+| `max_retries` | `number` | `3` | Automatic retry count on transient errors (0 to 10) |
 | `wait` | `boolean` | `true` | Wait for completion (up to 45s) before returning |
 
 ### `flow_storyboard_plan`
@@ -611,19 +666,21 @@ Pre-flight validator and prompt architect for multi-clip generation. Audits char
 
 | Argument | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `title` | `string` | *(Required)* | Project or narrative title |
-| `world_bible` | `object` | *(Required)* | Environment specification: visual style, setting, lighting, physics, audio atmosphere |
-| `character_ledger` | `array` | *(Required)* | List of all characters (id, name, appearance, clothing lock, default spatial anchor, relationship) |
-| `scene_beats` | `array` | *(Required)* | Chronological beats with duration, participating characters, actions, spatial layout, boundary handoffs (`fromPreviousClip`, `toNextClip`) |
+| `title` | `string` | *(Required)* | Story or video sequence title |
+| `logline` | `string` | *(Required)* | 1–2 sentence core narrative summary |
+| `world_bible` | `object` | *(Required)* | Object with `setting`, `time_period`, `visual_tone`, `lighting_rules`, and `invariants` (`string[]`) |
+| `characters` | `array` | *(Required)* | List of `{ name, role, appearance, spatial_anchor?, clothing_lock? }` |
+| `scenes` | `array` | *(Required)* | Chronological beats `{ clip_number, scene_title, duration?, environment, characters_present, ongoing_events, camera_movement, continuity_handoff }` |
+| `output_file` | `string` | optional | Optional file path to save the generated Markdown storyboard report |
 
 ### `flow_extract_frame`
 Extracts an exact high-resolution anchor frame from a video clip using FFmpeg for visual continuity anchoring.
 
 | Argument | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `video_path` | `string` | *(Required)* | Absolute path to the source video file |
+| `video_path` | `string` | *(Required)* | Path to the source video file (`.mp4`) |
 | `position` | `enum` | `last` | Frame position to extract: `last`, `first`, or `timestamp` |
-| `timestamp_seconds` | `number` | optional | Exact timestamp in seconds (when position is `timestamp`) |
+| `timestamp_sec` | `number` | optional | Exact timestamp in seconds (when `position` is `timestamp`) |
 | `output_path` | `string` | optional | Custom output path for the extracted PNG image |
 
 ### `flow_stitch_video`
@@ -631,10 +688,10 @@ Stitches multiple sequential video clips into a single continuous master video u
 
 | Argument | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `clip_paths` | `string[]` | *(Required)* | Chronological list of clip video paths (minimum 2 clips) |
-| `output_path` | `string` | optional | Custom output path for master continuous video |
+| `clip_paths` | `string[]` | *(Required)* | Chronological list of video file paths (minimum 1 clip) |
+| `output_path` | `string` | optional | Custom output path (defaults to `~/Downloads/flow/master_continuous_<ts>.mp4`) |
 | `transition` | `enum` | `cut` | Transition type: `cut` (seamless direct join) or `crossfade` (blended transition) |
-| `crossfade_duration` | `number` | `0.5` | Crossfade duration in seconds (if transition is `crossfade`) |
+| `crossfade_sec` | `number` | `0.5` | Crossfade duration in seconds (`0.1` to `2.0`, if `transition` is `crossfade`) |
 
 ### `flow_status`
 Reports live status of the bridge daemon, browser extension, Google sign-in state, tab visibility, and active jobs.
@@ -677,13 +734,16 @@ flow-mcp generate "Cyberpunk samurai standing in rain at dusk, neon reflections"
 flow-mcp generate "Hyperlapse of clouds passing over snowcapped mountains" --mode flow-text-to-video --duration 6
 
 # Chain from previous clip to maintain seamless boundary continuity (auto-extracts last frame)
-flow-mcp generate "Character enters the archive room and examines documents" --chain "./downloads/clip_1.mp4" --duration 6
+flow-mcp generate "Character enters the archive room and examines documents" --chain "./downloads/clip_1.mp4" --mode flow-frame-to-video --duration 6
 
 # Extract anchor frame from video (last, first, or timestamp)
 flow-mcp extract-frame "./downloads/clip_1.mp4" --position last --output "./anchors/clip1_end.png"
 
 # Stitch sequential clips into a master continuous video (cut or crossfade)
 flow-mcp stitch ./downloads/clip_1.mp4 ./downloads/clip_2.mp4 ./downloads/clip_3.mp4 --transition cut --output "./master_film.mp4"
+
+# Install companion skill into ~/.claude/skills/flow-generate
+flow-mcp skill install
 
 # List recent jobs (with attempt counts)
 flow-mcp list
@@ -700,16 +760,35 @@ flow-mcp stop
 
 ---
 
-## 📋 Generation Modes
+## 📋 Models, Durations & Generation Modes
 
-- **`flow-text-to-image`**: Fast text-to-image with Nano Banana Pro/2/Lite.
+### Available Models & Reference Limits
+| Category | Model ID | Notes & Ingredient Reference Cap |
+| :--- | :--- | :--- |
+| **Image** | `nano-banana-pro` | High-resolution illustrations, character sheets, props |
+| **Image** | `nano-banana-2` | Fast image generation with strong prompt adherence |
+| **Image** | `nano-banana-2-lite` | Lightweight, rapid image drafting |
+| **Video** | `veo-3.1-quality` | Highest-fidelity 1080p video (`0` ingredients in `flow-ingredients-to-video`; supports `flow-frame-to-video` chaining) |
+| **Video** | `veo-3.1-fast` | Fast cinematic generation (up to `3` ingredients) |
+| **Video** | `veo-3.1-lite` | Lightweight video drafting (up to `3` ingredients) |
+| **Video** | `omni-flash` | Multi-ingredient video composition (up to **`7`** ingredients) |
+
+### Video Duration & Multi-Minute Films
+- **Single-Clip Durations**: `4s`, `6s` *(default)*, `8s`, and `10s`.
+- **Extending Beyond 8s–10s**:
+  - Use **`flow-extend-video`** to append extended segments directly on Google Flow's timeline.
+  - Use **`chain_from_video`** + **`flow_stitch_video`** to link unlimited 6s–10s clips into a continuous multi-minute video with locked characters and seamless boundaries.
+
+### Generation Modes
+- **`flow-text-to-image`**: Text-to-image with Nano Banana Pro / 2 / 2 Lite.
 - **`flow-image-to-image`**: Image-guided generation taking up to 10 input reference images.
 - **`flow-text-to-video`**: Text-to-video with Veo 3.1 and Omni Flash.
-- **`flow-frame-to-video`**: First and last frame video interpolation (2 reference frames).
-- **`flow-ingredients-to-video`**: Multi-asset video composition (up to 7 references).
-- **`flow-video-to-video`**: Video stylization and transformation.
-- **`flow-extend-video`**: Lengthen an existing Veo clip (+6s per extension).
+- **`flow-frame-to-video`**: Start/end keyframe video generation (up to 2 reference frames).
+- **`flow-ingredients-to-video`**: Multi-asset video composition (up to 7 references with `omni-flash`, up to 3 with `veo-3.1-fast`/`lite`).
+- **`flow-video-to-video`**: Video stylization and transformation (1 input).
+- **`flow-extend-video`**: Lengthen an existing clip directly on the Flow timeline.
 - **`flow-create-character`**: Generates and registers a consistent character into the project.
+- **`flow-set-voice`**, **`flow-rename-asset`**, **`flow-upload-assets`**: Project character voice and asset management helpers.
 
 ---
 
